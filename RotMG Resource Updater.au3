@@ -32,7 +32,7 @@
 #Region ;**** Directives created by AutoIt3Wrapper_GUI ****
 #AutoIt3Wrapper_UseUpx=y
 #AutoIt3Wrapper_Change2CUI=y
-#AutoIt3Wrapper_Res_Fileversion=1.1.0.0
+#AutoIt3Wrapper_Res_Fileversion=1.1.1.0
 #AutoIt3Wrapper_Run_Tidy=y
 #AutoIt3Wrapper_Run_Au3Stripper=y
 #Au3Stripper_Parameters=/pe /sf /sv /rm /rsln
@@ -47,7 +47,7 @@
 #include <WinHttpConstants.au3>
 #include <Crypt.au3>
 
-Global Const $VERSION = "1.1" ; Remember to increment!
+Global Const $VERSION = "1.1.1" ; Remember to increment!
 Global Const $UseResExtractor = False ; Use ResExtractor instead of using RABCDAsm directly
 Global Const $LogToFile = True
 Global Const $HashAlg = $CALG_MD5
@@ -56,6 +56,7 @@ Global Const $HashAlg = $CALG_MD5
 Global Const $aInvalid[] = []
 
 Global $ErrorCount = 0
+Global $ErrorMissingFiles[0]
 Global $ClientVersion = ""
 
 If $LogToFile Then
@@ -141,6 +142,9 @@ If @error = 0 Then
 	FileClose($fHandle)
 
 	_Log("Successfully downloaded Client.swf")
+Else
+	_LogError("Coudnt download Client.swf")
+	_LogMissingFile("client.swf")
 EndIf
 
 _WinHttpCloseHandle($hConnect)
@@ -188,45 +192,57 @@ Else
 		_Log("Client version: " & $aRegExpr[0] & "." & $aRegExpr[1])
 	EndIf
 
-	_Log("Creating packets.xml...")
-
 	; Create packets.xml
-	$fHandle = FileOpen($RABCDAsmPath & "\client-0\kabam\rotmg\messaging\impl\GameServerConnection.class.asasm", $FO_READ + $FO_UTF8)
+	_Log("Creating packets.xml...")
+	Local $sGameSeverPath
 
 	If Not FileExists($RABCDAsmPath & "\client-0\kabam\rotmg\messaging\impl\GameServerConnection.class.asasm") Then
-		MsgBox(16, "", "GameServerConnection.class.asam wasnt found!")
-		Exit
+		_Log("Looking for 'GameServerConnection.class.asasm'...")
+
+		$aFileList = _FileListToArrayRec($RABCDAsmPath & "\client-0", "GameServerConnection.class.asasm", $FLTAR_FILES, $FLTAR_RECUR, $FLTAR_NOSORT, $FLTAR_FULLPATH)
+
+		If Not @error Then
+			$sGameSeverPath = $aFileList[1] ; we really shoud only get 1 entry
+
+			_Log("Found 'GameServerConnection.class.asasm' at """ & $sGameSeverPath & '"')
+		Else
+			_LogError("Coudnt find 'GameServerConnection.class.asasm' at """ & $RABCDAsmPath & '\client-0"')
+		EndIf
 	Else
-		_Log("Found GameServerConnection.class.asam")
+		$sGameSeverPath = $RABCDAsmPath & "\client-0\kabam\rotmg\messaging\impl\GameServerConnection.class.asasm"
+		_Log("Found 'GameServerConnection.class.asasm' at """ & $sGameSeverPath & '"')
 	EndIf
 
-	Global $aPacketFinal[0][2] ; 0 = Name, 1 = ID
+	If FileExists($sGameSeverPath) Then
+		$fHandle = FileOpen($sGameSeverPath, $FO_READ + $FO_UTF8)
+		$fRead = FileRead($fHandle)
+		FileClose($fHandle)
 
-	$fRead = FileReadToArray($fHandle)
-
-	For $i = 0 To @extended - 1 Step 1
-		Local $aPackets = StringRegExp($fRead[$i], '(?i) trait const QName\(PackageNamespace\(""\), "([^)]+)"\) slotid \d+ type QName\(PackageNamespace\(""\), "int"\) value Integer\(([^)]+)\) end', $STR_REGEXPARRAYGLOBALMATCH)
+		Local $aPackets = StringRegExp($fRead, '(?i)(?s)trait const QName\(PackageNamespace\(""\), "([^)]+)"\) slotid \d+ type QName\(PackageNamespace\(""\), "int"\) value Integer\(([^)]+)\) end', $STR_REGEXPARRAYGLOBALMATCH)
 
 		If @error = 0 Then
-			ReDim $aPacketFinal[UBound($aPacketFinal) + 1][2]
-			$aPacketFinal[UBound($aPacketFinal) - 1][0] = StringReplace($aPackets[0], "_", "") ; Remove all underscores
-			$aPacketFinal[UBound($aPacketFinal) - 1][1] = $aPackets[1]
+			_Log("Found " & UBound($aPackets) / 2 & " packets")
+
+			$fHandle = FileOpen($KRelayLibPath & "\packets.xml", $FO_CREATEPATH + $FO_OVERWRITE)
+			FileWrite($fHandle, "<Packets>" & @CRLF)
+
+			For $i = 0 To UBound($aPackets) - 1 Step 2
+				FileWrite($fHandle, "  <Packet>" & @CRLF & "    <PacketName>" & $aPackets[$i] & "</PacketName>" & @CRLF & "    <PacketID>" & $aPackets[$i + 1] & "</PacketID>" & @CRLF & "  </Packet>" & @CRLF)
+			Next
+
+			FileWrite($fHandle, "</Packets>")
+
+			_Log("Successfully created packets.xml")
+
+		Else
+			_LogError("Coudnt read packets.")
+			_LogMissingFile("packets.xml")
 		EndIf
-	Next
+	Else
+		_LogMissingFile("packets.xml")
+	EndIf
 
-	_Log("Found " & UBound($aPacketFinal) & " packets")
-
-	$fHandle = FileOpen($KRelayLibPath & "\packets.xml", $FO_CREATEPATH + $FO_OVERWRITE)
-	FileWrite($fHandle, "<Packets>" & @CRLF)
-
-	For $i = 0 To UBound($aPacketFinal) - 1 Step 1
-		FileWrite($fHandle, "  <Packet>" & @CRLF & "    <PacketName>" & $aPacketFinal[$i][0] & "</PacketName>" & @CRLF & "    <PacketID>" & $aPacketFinal[$i][1] & "</PacketID>" & @CRLF & "  </Packet>" & @CRLF)
-	Next
-
-	FileWrite($fHandle, "</Packets>")
-
-	_Log("Successfully created packets.xml")
-
+	; Create tiles.xml
 	_Log("Creating tiles.xml...")
 
 	$fHandle = FileOpen($RABCDAsmPath & "\client.swf", $FO_READ + $FO_ANSI)
@@ -234,29 +250,39 @@ Else
 	FileClose($fHandle)
 
 	$aRegExpr = StringRegExp($fRead, '(?i)(?s)<GroundTypes>(.*?)\R</GroundTypes>', $STR_REGEXPARRAYGLOBALMATCH)
+	If Not @error Then
 
-	$fHandle = FileOpen($KRelayLibPath & "\tiles.xml", $FO_OVERWRITE + $FO_CREATEPATH)
-	FileWrite($fHandle, '<?xml version="1.0" encoding="ISO-8859-1"?>' & @CRLF & @CRLF & '<GroundTypes>' & $aRegExpr[UBound($aRegExpr) - 1] & @CRLF & '</GroundTypes>' & @CRLF)
-	FileClose($fHandle)
+		$fHandle = FileOpen($KRelayLibPath & "\tiles.xml", $FO_OVERWRITE + $FO_CREATEPATH)
+		FileWrite($fHandle, '<?xml version="1.0" encoding="ISO-8859-1"?>' & @CRLF & @CRLF & '<GroundTypes>' & $aRegExpr[UBound($aRegExpr) - 1] & @CRLF & '</GroundTypes>' & @CRLF)
+		FileClose($fHandle)
 
-	_Log("Successfully created tiles.xml...")
+		_Log("Successfully created tiles.xml...")
+	Else
+		_LogError("Coudnt get GroundTyües from client.swf")
+		_LogMissingFile("tiles.xml")
+	EndIf
 
-	; Create Objects.xml
+	; Create objects.xml
 	_Log("Creating objects.xml...")
 
 	$aRegExpr = StringRegExp($fRead, '(?i)(?s)<Objects>(.*?)\R</Objects>', $STR_REGEXPARRAYGLOBALMATCH)
+	If Not @error Then
 
-	$fHandle = FileOpen($KRelayLibPath & "\objects.xml", $FO_OVERWRITE + $FO_CREATEPATH)
-	FileWrite($fHandle, "<Objects>")
+		$fHandle = FileOpen($KRelayLibPath & "\objects.xml", $FO_OVERWRITE + $FO_CREATEPATH)
+		FileWrite($fHandle, "<Objects>")
 
-	For $i = 0 To UBound($aRegExpr) - 1 Step 1
-		FileWrite($fHandle, $aRegExpr[$i])
-	Next
+		For $i = 0 To UBound($aRegExpr) - 1 Step 1
+			FileWrite($fHandle, $aRegExpr[$i])
+		Next
 
-	FileWrite($fHandle, @CRLF & "</Objects>" & @CRLF)
-	FileClose($fHandle)
+		FileWrite($fHandle, @CRLF & "</Objects>" & @CRLF)
+		FileClose($fHandle)
 
-	_Log("Successfully created objects.xml")
+		_Log("Successfully created objects.xml")
+	Else
+		_LogError("Coudnt get Objects from client.swf")
+		_LogMissingFile("objects.xml")
+	EndIf
 EndIf
 
 $hObjects = FileRead($KRelayLibPath & "\objects.xml")
@@ -507,6 +533,9 @@ Next
 _GDIPlus_ImageSaveToFile($hImage, $MuleDumpPath & "\Renders.png")
 If Not @error Then
 	_Log("Successfully created Renders.png")
+Else
+	_LogError("Coudnt create Renders.png")
+	_LogMissingFile("renders.png")
 EndIf
 
 FileWrite($fHandle, "}" & @CRLF & @CRLF & @CRLF & "// type: [id, starts, averages, maxes, slots]" & @CRLF & "classes = {" & @CRLF)
@@ -514,7 +543,6 @@ FileWrite($fHandle, "}" & @CRLF & @CRLF & @CRLF & "// type: [id, starts, average
 Const Enum $clType, $clID, $clSlot1, $clSlot2, $clSlot3, $clSlot4, $clHPMax, $clHP, $clMPMax, $clMP, $clAtkMax, $clAtk, $clDefMax, $clDef, $clSpdMax, $clSpd, $clDexMax, $clDex, $clVitMax, $clVit, $clWisMax, $clWis, $clLHPMin, $clLHPMax, $clLMPMin, $clLMPMax, $clLAtkMin, $clLAtkMax, $clLDefMin, $clLDefMax, $clLSpdMin, $clLSpdMax, $clLDexMin, $clLDexMax, $clLVitMin, $clLVitMax, $clLWisMin, $clLWisMax
 
 ; Classes
-$startLogging = False
 Local $iClassCount = 0
 For $i = 1 To $aObjects[0] Step 1
 	; HpRegen = Vit
@@ -547,8 +575,20 @@ _GDIPlus_Shutdown()
 ; Clean up Crypt
 _Crypt_Shutdown()
 
+; Error handling
 If $ErrorCount <> 0 Then
 	_Log(@CRLF & "[WARNING] RotMG Resource Updater encountered " & $ErrorCount & " problems!" & @CRLF & "You can report the problem at GitHub (RotMGHacker) or MPGH.net (megakillzor)" & @CRLF & "Please remember to include your log file!")
+EndIf
+
+If UBound($ErrorMissingFiles) <> 0 Then
+	Local $sList
+	For $i = 0 To UBound($ErrorMissingFiles) - 1 Step 1
+		$sList &= '"' & $ErrorMissingFiles[$i] & '", '
+	Next
+
+	$sList = StringMid($sList, 0, StringLen($sList) - 2) ; remove the last ", "
+
+	_Log(@CRLF & "[WARNING] RotMG Resource Updater wasn't able to create the following files: " & @CRLF & $sList)
 EndIf
 
 ; Display client version if we have, other wise display version from the server
@@ -598,7 +638,7 @@ Func _CheckForValidPaths()
 
 	For $i = 0 To UBound($aNeededFiles) - 1 Step 1
 		If Not FileExists($aNeededFiles[$i]) Then
-			_LogError('"' & $aNeededFiles[$i] & '" Doesnt exist!')
+			_LogError('Unable to locate "' & $aNeededFiles[$i] & '"')
 
 			Return False
 		EndIf
@@ -650,3 +690,11 @@ Func _LogError(Const $sText)
 
 	$ErrorCount += 1
 EndFunc   ;==>_LogError
+
+Func _LogMissingFile(Const $sFile)
+	ReDim $ErrorMissingFiles[UBound($ErrorMissingFiles) + 1]
+
+	$ErrorMissingFiles[UBound($ErrorMissingFiles) - 1] = $sFile
+
+	_LogError("Missing file: '" & $sFile & "'")
+EndFunc   ;==>_LogMissingFile
